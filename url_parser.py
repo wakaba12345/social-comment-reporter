@@ -32,8 +32,9 @@ def parse_url(url: str) -> tuple[str, str]:
         if fbid:
             return ("facebook", fbid)
         # https://www.facebook.com/share/p/1AzY7PhTkS/
+        # https://www.facebook.com/share/18JieiNmf7/
         if "/share/" in path:
-            match = re.search(r"/share/(?:p|v|r)/([A-Za-z0-9_-]+)", path)
+            match = re.search(r"/share/(?:(?:p|v|r)/)?([A-Za-z0-9_-]+)", path)
             if match:
                 return ("facebook", match.group(1))
 
