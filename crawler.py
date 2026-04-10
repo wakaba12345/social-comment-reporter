@@ -35,8 +35,40 @@ def _get(endpoint: str, params: dict | None = None) -> dict:
 # Platform-specific fetchers
 # ---------------------------------------------------------------------------
 
+def _fetch_facebook_comments_apify(url: str, max_comments: int) -> list[Comment]:
+    """Use Apify Facebook Comments Scraper to fetch comments including nested replies."""
+    token = config._get("APIFY_API_TOKEN")
+    resp = requests.post(
+        f"https://api.apify.com/v2/acts/apify~facebook-comments-scraper/run-sync-get-dataset-items"
+        f"?token={token}&timeout=120",
+        json={"startUrls": [{"url": url}], "resultsLimit": max_comments},
+        timeout=150,
+    )
+    if resp.status_code != 200:
+        raise CrawlerError(f"Apify 回傳錯誤：{resp.status_code} {resp.text[:200]}")
+    items = resp.json()
+    comments = []
+    for c in items:
+        text = c.get("text", "") or ""
+        if not text.strip():
+            continue
+        try:
+            likes = int(c.get("likesCount") or 0)
+        except (ValueError, TypeError):
+            likes = 0
+        depth = c.get("threadingDepth", 0)
+        comments.append(Comment(
+            author=c.get("profileName", "") or "",
+            content=text,
+            likes=likes,
+            published_at=c.get("date", "") or "",
+            is_reply=depth > 0,
+        ))
+    return comments
+
+
 def _fetch_facebook(post_id: str, original_url: str, max_comments: int) -> PostData:
-    # Facebook uses URL-based params
+    # 貼文 metadata 繼續用 byCrawl
     post = _get("/facebook/posts", params={"url": original_url})
     author = post.get("author", {}).get("name", "") or ""
     content = post.get("text", "") or ""
@@ -45,42 +77,11 @@ def _fetch_facebook(post_id: str, original_url: str, max_comments: int) -> PostD
     shares = int(post.get("shareCount", 0) or 0)
     comments_count = int(post.get("commentCount", 0) or 0)
 
-    # Fetch comments（分頁直到達到 max_comments）
-    comments: list[Comment] = []
-    cursor = None
+    # 留言改用 Apify（可抓巢狀回覆）
     try:
-        while len(comments) < max_comments:
-            params = {"url": original_url}
-            if cursor:
-                params["cursor"] = cursor
-            data = _get("/facebook/posts/comments", params=params)
-            raw = data.get("comments", []) or []
-            for c in raw:
-                if len(comments) >= max_comments:
-                    break
-                comments.append(Comment(
-                    author=c.get("authorName", "") or "",
-                    content=c.get("text", "") or "",
-                    likes=int(c.get("reactionCount", 0) or 0),
-                    published_at=c.get("createdAt", "") or "",
-                    is_reply=False,
-                ))
-                # 把巢狀回覆也加進來
-                for reply in (c.get("replies", []) or []):
-                    if len(comments) >= max_comments:
-                        break
-                    comments.append(Comment(
-                        author=reply.get("authorName", "") or "",
-                        content=reply.get("text", "") or "",
-                        likes=int(reply.get("reactionCount", 0) or 0),
-                        published_at=reply.get("createdAt", "") or "",
-                        is_reply=True,
-                    ))
-            cursor = data.get("nextCursor")
-            if not cursor or not raw:
-                break  # 沒有下一頁了
-    except PostNotFoundError:
-        pass
+        comments = _fetch_facebook_comments_apify(original_url, max_comments)
+    except Exception:
+        comments = []
 
     media = [{"type": m.get("type","image"), "url": m.get("url","")}
              for m in (post.get("media") or []) if m.get("url")]

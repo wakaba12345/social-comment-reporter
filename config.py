@@ -16,6 +16,7 @@ def _get(key: str) -> str:
 
 BYCRAWL_API_KEY = _get("BYCRAWL_API_KEY")
 ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
+APIFY_API_TOKEN = _get("APIFY_API_TOKEN")
 
 BYCRAWL_BASE_URL = "https://api.bycrawl.com"
 BYCRAWL_HEADERS = {"x-api-key": BYCRAWL_API_KEY}
