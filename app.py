@@ -42,11 +42,7 @@ with st.form("input_form"):
         "報導主題（選填，留空則自動推斷）",
         placeholder="例：捷運票價漲價爭議",
     )
-    model = st.selectbox(
-        "Claude 模型",
-        ["claude-sonnet-4-6", "claude-opus-4-6"],
-        index=0,
-    )
+    model = "claude-sonnet-4-6"
     run_btn = st.form_submit_button("開始生成報導", type="primary", use_container_width=True)
 
 # ── 執行 ─────────────────────────────────────────────────────
