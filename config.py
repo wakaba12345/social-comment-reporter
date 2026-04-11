@@ -17,6 +17,10 @@ def _get(key: str) -> str:
 BYCRAWL_API_KEY = _get("BYCRAWL_API_KEY")
 ANTHROPIC_API_KEY = _get("ANTHROPIC_API_KEY")
 APIFY_API_TOKEN = _get("APIFY_API_TOKEN")
+ADMIN_API = _get("ADMIN_API")
+GOOGLE_CLIENT_ID = _get("GOOGLE_CLIENT_ID")
+GOOGLE_API_KEY = _get("GOOGLE_API_KEY")
+GOOGLE_APP_ID = _get("GOOGLE_APP_ID")
 
 BYCRAWL_BASE_URL = "https://api.bycrawl.com"  # used for X/generic fallback only
 

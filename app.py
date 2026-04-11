@@ -1,5 +1,7 @@
 import sys
 import os
+import base64
+import json
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -7,13 +9,53 @@ sys.path.insert(0, os.path.dirname(__file__))
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
+import requests as http_requests
 import streamlit as st
+import streamlit.components.v1 as components
+import extra_streamlit_components as stx
 from url_parser import parse_url, UnsupportedPlatformError
 from crawler import fetch_post, PostNotFoundError, CrawlerError
 from preprocessor import preprocess
 from reporter import generate_report
+from config import ADMIN_API, GOOGLE_CLIENT_ID
 
 MAX_COMMENTS = 50
+_COOKIE_KEY = "_sct"  # obscure session cookie name
+
+
+def _decode_jwt_payload(credential: str) -> dict:
+    """Decode Google JWT payload (no signature verification needed — server validates)."""
+    try:
+        payload_b64 = credential.split(".")[1]
+        payload_b64 += "=" * (4 - len(payload_b64) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload_b64))
+    except Exception:
+        return {}
+
+
+def _exchange_token(credential: str, user: dict) -> str:
+    """POST to ADMIN_API and return the storm token, or empty string on failure."""
+    try:
+        resp = http_requests.post(
+            f"{ADMIN_API}v1/loging",
+            json={
+                "email": user.get("email", ""),
+                "name": user.get("name", ""),
+                "token": credential,
+                "refreshToken": "",
+                "expiresIn": user.get("exp", 0),
+                "avatar": user.get("picture", ""),
+                "tokenName": "社群留言報導生成器",
+            },
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=15,
+        )
+        data = resp.json()
+        if str(data.get("code")) == "200":
+            return data["data"]["token"]
+    except Exception as e:
+        print(f"[auth] token exchange error: {e}")
+    return ""
 
 PLATFORM_LABEL = {
     "facebook": "Facebook", "threads": "Threads",
@@ -29,20 +71,68 @@ st.set_page_config(
     layout="wide",
 )
 
-# ── 登入驗證 ─────────────────────────────────────────────────
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+# ── Cookie manager（必須在頁面最早初始化）────────────────────
+cookie_manager = stx.CookieManager()
 
-if not st.session_state.authenticated:
-    st.title("📰 社群留言報導生成器")
-    pwd = st.text_input("請輸入密碼", type="password")
-    if st.button("登入", use_container_width=True):
-        if pwd == "54340511":
-            st.session_state.authenticated = True
+# ── 處理 Google callback（credential 放在 URL query param）──
+_credential = st.query_params.get("credential", "")
+if _credential:
+    _user = _decode_jwt_payload(_credential)
+    if _user:
+        with st.spinner("登入中..."):
+            _token = _exchange_token(_credential, _user)
+        if _token:
+            cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
+            st.query_params.clear()
             st.rerun()
         else:
-            st.error("密碼錯誤")
+            st.error("登入失敗，請重試")
+            st.query_params.clear()
+    else:
+        st.error("無法解析 Google 登入資訊")
+        st.query_params.clear()
+
+# ── 驗證：檢查 cookie ─────────────────────────────────────────
+_stored_token = cookie_manager.get(_COOKIE_KEY)
+
+if not _stored_token:
+    st.title("📰 社群留言報導生成器")
+    st.write("")
+    components.html(
+        f"""
+        <script src="https://accounts.google.com/gsi/client" async defer></script>
+        <div style="display:flex;justify-content:center;align-items:center;padding:24px 0;">
+          <div id="g_id_onload"
+               data-client_id="{GOOGLE_CLIENT_ID}"
+               data-callback="handleCredentialResponse"
+               data-auto_prompt="false">
+          </div>
+          <div class="g_id_signin"
+               data-type="standard"
+               data-size="large"
+               data-theme="outline"
+               data-text="signin_with"
+               data-shape="rectangular"
+               data-logo_alignment="left">
+          </div>
+        </div>
+        <script>
+        function handleCredentialResponse(response) {{
+          var url = new URL(window.parent.location.href);
+          url.searchParams.set('credential', response.credential);
+          window.parent.location.href = url.toString();
+        }}
+        </script>
+        """,
+        height=100,
+    )
     st.stop()
+
+# ── 登出按鈕 ─────────────────────────────────────────────────
+with st.sidebar:
+    if st.button("登出", use_container_width=True):
+        cookie_manager.delete(_COOKIE_KEY, key="cookie_del")
+        st.rerun()
 
 st.title("📰 社群留言報導生成器")
 st.caption("輸入社群貼文網址，自動擷取留言並生成風傳媒風格報導草稿")
