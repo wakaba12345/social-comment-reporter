@@ -13,7 +13,7 @@ from crawler import fetch_post, PostNotFoundError, CrawlerError
 from preprocessor import preprocess
 from reporter import generate_report
 
-MAX_COMMENTS = 500  # 盡量抓最多
+MAX_COMMENTS = 50
 
 PLATFORM_LABEL = {
     "facebook": "Facebook", "threads": "Threads",
@@ -28,6 +28,21 @@ st.set_page_config(
     page_icon="📰",
     layout="wide",
 )
+
+# ── 登入驗證 ─────────────────────────────────────────────────
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("📰 社群留言報導生成器")
+    pwd = st.text_input("請輸入密碼", type="password")
+    if st.button("登入", use_container_width=True):
+        if pwd == "54340511":
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("密碼錯誤")
+    st.stop()
 
 st.title("📰 社群留言報導生成器")
 st.caption("輸入社群貼文網址，自動擷取留言並生成風傳媒風格報導草稿")
@@ -76,8 +91,8 @@ if run_btn:
 
         post.comments = preprocess(post.comments, MAX_COMMENTS)
 
-        if platform == "threads":
-            note = f"{post.comments_count} 則留言（Threads 不提供留言擷取）"
+        if platform == "threads" and not post.comments:
+            note = f"{post.comments_count} 則留言（未能取得回覆）"
         elif platform == "x" and not post.comments:
             note = f"{post.comments_count} 則留言（未能取得回覆）"
         else:

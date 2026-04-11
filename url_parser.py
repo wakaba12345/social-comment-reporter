@@ -28,20 +28,39 @@ def parse_url(url: str) -> tuple[str, str]:
         if match:
             return ("facebook", match.group(1))
         # https://www.facebook.com/photo/?fbid=123
+        # https://www.facebook.com/photo.php?fbid=123
         fbid = query.get("fbid", [None])[0]
         if fbid:
             return ("facebook", fbid)
+        # https://www.facebook.com/watch/?v=948795611051587
+        v = query.get("v", [None])[0]
+        if v and "/watch" in path:
+            return ("facebook", v)
         # https://www.facebook.com/share/p/1AzY7PhTkS/
+        # https://www.facebook.com/share/v/1CKPvY4omx/
         # https://www.facebook.com/share/18JieiNmf7/
         if "/share/" in path:
             match = re.search(r"/share/(?:(?:p|v|r)/)?([A-Za-z0-9_-]+)", path)
             if match:
                 return ("facebook", match.group(1))
+        # https://www.facebook.com/username/videos/948795611051587/
+        match = re.search(r"/videos/(\d+)", path)
+        if match:
+            return ("facebook", match.group(1))
+        # https://www.facebook.com/reel/1234567890
+        match = re.search(r"/reel/(\d+)", path)
+        if match:
+            return ("facebook", match.group(1))
 
     # Threads
     elif "threads.net" in domain or "threads.com" in domain:
         # https://www.threads.net/@username/post/AbCdEfG
-        match = re.search(r"/@[^/]+/post/([A-Za-z0-9_-]+)", path)
+        # https://www.threads.net/username/post/AbCdEfG  (無 @)
+        match = re.search(r"/@?[^/]+/post/([A-Za-z0-9_-]+)", path)
+        if match:
+            return ("threads", match.group(1))
+        # https://www.threads.net/t/AbCdEfG  (短連結)
+        match = re.search(r"/t/([A-Za-z0-9_-]+)", path)
         if match:
             return ("threads", match.group(1))
 
