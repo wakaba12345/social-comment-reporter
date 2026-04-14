@@ -103,6 +103,7 @@ if _code:
                 with st.spinner("登入中..."):
                     _token = _exchange_token(_id_token_str, _user)
                 if _token:
+                    st.session_state["_storm_token"] = _token
                     cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
                     st.rerun()
                 else:
@@ -116,7 +117,7 @@ if _code:
 _local_dev = os.getenv("LOCAL_DEV", "").lower() in ("1", "true", "yes")
 
 if not _local_dev:
-    _stored_token = cookie_manager.get(_COOKIE_KEY)
+    _stored_token = st.session_state.get("_storm_token") or cookie_manager.get(_COOKIE_KEY)
 
     if not _stored_token:
         st.title("📰 社群留言報導生成器")
@@ -146,6 +147,7 @@ with st.sidebar:
     if _local_dev:
         st.caption("🛠 本機開發模式（已跳過登入）")
     elif st.button("登出", use_container_width=True):
+        st.session_state.pop("_storm_token", None)
         cookie_manager.delete(_COOKIE_KEY, key="cookie_del")
         st.rerun()
 
