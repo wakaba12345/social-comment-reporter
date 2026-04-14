@@ -133,21 +133,21 @@ if not _local_dev:
             "scope": "openid email profile",
             "prompt": "select_account",
         })
-        components.html(
+        st.markdown(
             f"""
-            <div style="display:flex;justify-content:center;align-items:center;height:80px">
-              <button
-                onclick="window.parent.location.href='{_auth_url}'"
-                style="display:flex;align-items:center;gap:10px;padding:10px 24px;
-                       border:1px solid #dadce0;border-radius:4px;background:#fff;
-                       font-size:15px;font-family:Roboto,Arial,sans-serif;
-                       cursor:pointer;color:#3c4043;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+            <div style="display:flex;justify-content:center;padding:24px 0">
+              <a href="{_auth_url}" target="_self"
+                 style="display:flex;align-items:center;gap:10px;padding:10px 24px;
+                        border:1px solid #dadce0;border-radius:4px;background:#fff;
+                        font-size:15px;font-family:Roboto,Arial,sans-serif;
+                        text-decoration:none;color:#3c4043;
+                        box-shadow:0 1px 3px rgba(0,0,0,.12)">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20">
                 使用 Google 帳號登入
-              </button>
+              </a>
             </div>
             """,
-            height=80,
+            unsafe_allow_html=True,
         )
         st.stop()
 
