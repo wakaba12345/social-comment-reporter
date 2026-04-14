@@ -108,7 +108,7 @@ if not _local_dev:
                 "依照 `.streamlit/secrets.toml.example` 補上 `GOOGLE_CLIENT_ID`。"
             )
             st.stop()
-        components.html(
+        st.markdown(
             f"""
             <script src="https://accounts.google.com/gsi/client" async defer></script>
             <div style="display:flex;justify-content:center;align-items:center;padding:24px 0;">
@@ -128,13 +128,13 @@ if not _local_dev:
             </div>
             <script>
             function handleCredentialResponse(response) {{
-              var url = new URL(window.parent.location.href);
+              var url = new URL(window.location.href);
               url.searchParams.set('credential', response.credential);
-              window.parent.location.href = url.toString();
+              window.location.href = url.toString();
             }}
             </script>
             """,
-            height=100,
+            unsafe_allow_html=True,
         )
         st.stop()
 
