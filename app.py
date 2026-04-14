@@ -18,7 +18,9 @@ from url_parser import parse_url, UnsupportedPlatformError
 from crawler import fetch_post, PostNotFoundError, CrawlerError
 from preprocessor import preprocess
 from reporter import generate_report
-from config import ADMIN_API, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+
+_ALLOWED_HD = "storm.mg"  # 只允許此 Google Workspace 網域
 
 _REDIRECT_URI = "https://social-comment-reporter-nxayfk9rwvwnovzsqe6gjg.streamlit.app/"
 
@@ -36,30 +38,6 @@ def _decode_jwt_payload(credential: str) -> dict:
         return {}
 
 
-def _exchange_token(credential: str, user: dict) -> tuple:
-    """POST to ADMIN_API and return (storm_token, raw_response)."""
-    try:
-        resp = http_requests.post(
-            f"{ADMIN_API}v1/loging",
-            json={
-                "email": user.get("email", ""),
-                "name": user.get("name", ""),
-                "token": credential,
-                "refreshToken": "",
-                "expiresIn": user.get("exp", 0),
-                "avatar": user.get("picture", ""),
-                "tokenName": "社群留言報導生成器",
-            },
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
-            timeout=15,
-        )
-        data = resp.json()
-        if str(data.get("code")) == "200":
-            return data["data"]["token"], data
-        return "", data
-    except Exception as e:
-        print(f"[auth] token exchange error: {e}")
-        return "", {"error": str(e)}
 
 PLATFORM_LABEL = {
     "facebook": "Facebook", "threads": "Threads",
@@ -85,8 +63,7 @@ _oauth_error_from_google = st.query_params.get("error", "")
 if _oauth_error_from_google:
     st.session_state["_auth_error"] = f"Google 拒絕授權：{_oauth_error_from_google}"
 
-# Step 1：用 Google code 換 id_token（只做一次，成功後把 id_token 存進 session_state）
-if _code and not st.session_state.get("_storm_token") and not st.session_state.get("_google_id_token"):
+if _code and not st.session_state.get("_authed_email"):
     try:
         _token_resp = http_requests.post(
             "https://oauth2.googleapis.com/token",
@@ -102,44 +79,29 @@ if _code and not st.session_state.get("_storm_token") and not st.session_state.g
         _resp_json = _token_resp.json()
         _id_token_str = _resp_json.get("id_token", "")
         if not _id_token_str:
-            st.session_state["_auth_error"] = f"Google 未回傳 id_token。回應：{_resp_json}"
+            st.session_state["_auth_error"] = f"Google 未回傳 id_token：{_resp_json}"
         else:
             _user = _decode_jwt_payload(_id_token_str)
-            if _user:
-                # 存進 session_state，後續輪次不需要重用 code
-                st.session_state["_google_id_token"] = _id_token_str
-                st.session_state["_google_user"] = _user
-                st.query_params.clear()  # code 已用完，清除 URL
+            _email = _user.get("email", "")
+            _hd = _user.get("hd", "")
+            if _hd != _ALLOWED_HD and not _email.endswith(f"@{_ALLOWED_HD}"):
+                st.session_state["_auth_error"] = f"僅限 @{_ALLOWED_HD} 帳號使用（你的帳號：{_email}）"
+            elif _email:
+                st.session_state["_authed_email"] = _email
+                cookie_manager.set(_COOKIE_KEY, _email, key="cookie_set")
+                st.query_params.clear()
             else:
-                st.session_state["_auth_error"] = "無法解析 Google 帳號資訊"
+                st.session_state["_auth_error"] = "無法取得 Google 帳號 email"
     except Exception as e:
         st.session_state["_auth_error"] = f"OAuth 錯誤：{e}"
-
-# Step 2：用 id_token 換 Storm token（session_state 有 id_token 就嘗試）
-if st.session_state.get("_google_id_token") and not st.session_state.get("_storm_token"):
-    _id_token_str = st.session_state["_google_id_token"]
-    _user = st.session_state.get("_google_user", {})
-    with st.spinner("登入中..."):
-        _token, _storm_resp = _exchange_token(_id_token_str, _user)
-    with st.expander("🔍 DEBUG Storm API 回應（暫時）", expanded=True):
-        st.write(_storm_resp)
-    if _token:
-        st.session_state["_storm_token"] = _token
-        st.session_state.pop("_google_id_token", None)
-        st.session_state.pop("_google_user", None)
-        cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-    else:
-        st.session_state["_auth_error"] = f"Storm API 登入失敗：{_storm_resp}"
-        st.session_state.pop("_google_id_token", None)
-        st.session_state.pop("_google_user", None)
 
 # ── 驗證：本機開發模式直接跳過登入 ──────────────────────────
 _local_dev = os.getenv("LOCAL_DEV", "").lower() in ("1", "true", "yes")
 
 if not _local_dev:
-    _stored_token = st.session_state.get("_storm_token") or cookie_manager.get(_COOKIE_KEY)
+    _authed_email = st.session_state.get("_authed_email") or cookie_manager.get(_COOKIE_KEY)
 
-    if not _stored_token:
+    if not _authed_email:
         st.title("📰 社群留言報導生成器")
         st.write("")
         if "_auth_error" in st.session_state:
@@ -155,19 +117,25 @@ if not _local_dev:
             "redirect_uri": _REDIRECT_URI,
             "response_type": "code",
             "scope": "openid email profile",
+            "hd": _ALLOWED_HD,  # 只顯示 storm.mg 帳號
             "prompt": "select_account",
         })
         col = st.columns([1, 2, 1])[1]
         with col:
             st.link_button("使用 Google 帳號登入", _auth_url, use_container_width=True)
+        st.caption(f"僅限 @{_ALLOWED_HD} 帳號使用")
         st.stop()
+
+    # 同步 session_state（cookie 讀到後補回）
+    if not st.session_state.get("_authed_email"):
+        st.session_state["_authed_email"] = _authed_email
 
 # ── 登出按鈕（本機開發模式不顯示）───────────────────────────
 with st.sidebar:
     if _local_dev:
         st.caption("🛠 本機開發模式（已跳過登入）")
     elif st.button("登出", use_container_width=True):
-        st.session_state.pop("_storm_token", None)
+        st.session_state.pop("_authed_email", None)
         cookie_manager.delete(_COOKIE_KEY, key="cookie_del")
         st.rerun()
 
