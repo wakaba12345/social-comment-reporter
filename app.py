@@ -79,6 +79,20 @@ cookie_manager = stx.CookieManager()
 
 # ── 處理 OAuth2 callback（Google 回傳 ?code=）────────────────
 _code = st.query_params.get("code", "")
+_oauth_error_from_google = st.query_params.get("error", "")
+
+# DEBUG 面板（暫時）
+with st.expander("🔍 DEBUG（暫時，測試後移除）", expanded=True):
+    st.write("**query_params:**", dict(st.query_params))
+    st.write("**_code 存在:**", bool(_code))
+    st.write("**session_state keys:**", list(st.session_state.keys()))
+    st.write("**GOOGLE_CLIENT_ID 設定:**", bool(GOOGLE_CLIENT_ID))
+    st.write("**GOOGLE_CLIENT_SECRET 設定:**", bool(GOOGLE_CLIENT_SECRET))
+    st.write("**ADMIN_API:**", ADMIN_API or "（未設定）")
+
+if _oauth_error_from_google:
+    st.session_state["_auth_error"] = f"Google 拒絕授權：{_oauth_error_from_google}"
+
 if _code:
     st.query_params.clear()  # 先清 URL，避免重整重複使用 code
     try:
@@ -94,6 +108,8 @@ if _code:
             timeout=15,
         )
         _resp_json = _token_resp.json()
+        with st.expander("🔍 DEBUG Google token 回應", expanded=True):
+            st.write(_resp_json)
         _id_token_str = _resp_json.get("id_token", "")
         if not _id_token_str:
             st.session_state["_auth_error"] = f"Google 未回傳 id_token。回應：{_resp_json}"
@@ -102,10 +118,11 @@ if _code:
             if _user:
                 with st.spinner("登入中..."):
                     _token = _exchange_token(_id_token_str, _user)
+                with st.expander("🔍 DEBUG Storm token 結果", expanded=True):
+                    st.write("token 取得成功:", bool(_token))
                 if _token:
                     st.session_state["_storm_token"] = _token
                     cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-                    # 不 rerun，讓這輪直接繼續跑到主程式（session_state 已有 token）
                 else:
                     st.session_state["_auth_error"] = "Storm API 登入失敗，請重試"
             else:
