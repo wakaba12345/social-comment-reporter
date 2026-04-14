@@ -2,6 +2,7 @@ import sys
 import os
 import base64
 import json
+import urllib.parse
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -17,7 +18,9 @@ from url_parser import parse_url, UnsupportedPlatformError
 from crawler import fetch_post, PostNotFoundError, CrawlerError
 from preprocessor import preprocess
 from reporter import generate_report
-from config import ADMIN_API, GOOGLE_CLIENT_ID
+from config import ADMIN_API, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+
+_REDIRECT_URI = "https://social-comment-reporter-nxayfk9rwvwnovzsqe6gjg.streamlit.app/"
 
 MAX_COMMENTS = 50
 _COOKIE_KEY = "_sct"  # obscure session cookie name
@@ -74,22 +77,38 @@ st.set_page_config(
 # ── Cookie manager（必須在頁面最早初始化）────────────────────
 cookie_manager = stx.CookieManager()
 
-# ── 處理 Google callback（credential 放在 URL query param）──
-_credential = st.query_params.get("credential", "")
-if _credential:
-    _user = _decode_jwt_payload(_credential)
-    if _user:
-        with st.spinner("登入中..."):
-            _token = _exchange_token(_credential, _user)
-        if _token:
-            cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-            st.query_params.clear()
-            st.rerun()
+# ── 處理 OAuth2 callback（Google 回傳 ?code=）────────────────
+_code = st.query_params.get("code", "")
+if _code:
+    try:
+        _token_resp = http_requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": _code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": _REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+            timeout=15,
+        )
+        _id_token_str = _token_resp.json().get("id_token", "")
+        _user = _decode_jwt_payload(_id_token_str) if _id_token_str else {}
+        if _user:
+            with st.spinner("登入中..."):
+                _token = _exchange_token(_id_token_str, _user)
+            if _token:
+                cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
+                st.query_params.clear()
+                st.rerun()
+            else:
+                st.error("登入失敗，請重試")
+                st.query_params.clear()
         else:
-            st.error("登入失敗，請重試")
+            st.error("無法取得 Google 帳號資訊")
             st.query_params.clear()
-    else:
-        st.error("無法解析 Google 登入資訊")
+    except Exception as e:
+        st.error(f"OAuth 錯誤：{e}")
         st.query_params.clear()
 
 # ── 驗證：本機開發模式直接跳過登入 ──────────────────────────
@@ -101,40 +120,34 @@ if not _local_dev:
     if not _stored_token:
         st.title("📰 社群留言報導生成器")
         st.write("")
-        if not GOOGLE_CLIENT_ID:
+        if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
             st.error(
-                "**設定錯誤：`GOOGLE_CLIENT_ID` 未設定。**\n\n"
-                "請至 Streamlit Cloud → App settings → Secrets，"
-                "依照 `.streamlit/secrets.toml.example` 補上 `GOOGLE_CLIENT_ID`。"
+                "**設定錯誤：** `GOOGLE_CLIENT_ID` 或 `GOOGLE_CLIENT_SECRET` 未設定。\n\n"
+                "請至 Streamlit Cloud → App settings → Secrets 補上這兩個值。"
             )
             st.stop()
-        st.markdown(
+        _auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": _REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "prompt": "select_account",
+        })
+        components.html(
             f"""
-            <script src="https://accounts.google.com/gsi/client" async defer></script>
-            <div style="display:flex;justify-content:center;align-items:center;padding:24px 0;">
-              <div id="g_id_onload"
-                   data-client_id="{GOOGLE_CLIENT_ID}"
-                   data-callback="handleCredentialResponse"
-                   data-auto_prompt="false">
-              </div>
-              <div class="g_id_signin"
-                   data-type="standard"
-                   data-size="large"
-                   data-theme="outline"
-                   data-text="signin_with"
-                   data-shape="rectangular"
-                   data-logo_alignment="left">
-              </div>
+            <div style="display:flex;justify-content:center;align-items:center;height:80px">
+              <button
+                onclick="window.parent.location.href='{_auth_url}'"
+                style="display:flex;align-items:center;gap:10px;padding:10px 24px;
+                       border:1px solid #dadce0;border-radius:4px;background:#fff;
+                       font-size:15px;font-family:Roboto,Arial,sans-serif;
+                       cursor:pointer;color:#3c4043;box-shadow:0 1px 3px rgba(0,0,0,.12)">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20">
+                使用 Google 帳號登入
+              </button>
             </div>
-            <script>
-            function handleCredentialResponse(response) {{
-              var url = new URL(window.location.href);
-              url.searchParams.set('credential', response.credential);
-              window.location.href = url.toString();
-            }}
-            </script>
             """,
-            unsafe_allow_html=True,
+            height=80,
         )
         st.stop()
 
