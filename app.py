@@ -80,6 +80,7 @@ cookie_manager = stx.CookieManager()
 # ── 處理 OAuth2 callback（Google 回傳 ?code=）────────────────
 _code = st.query_params.get("code", "")
 if _code:
+    st.query_params.clear()  # 先清 URL，避免重整重複使用 code
     try:
         _token_resp = http_requests.post(
             "https://oauth2.googleapis.com/token",
@@ -92,24 +93,24 @@ if _code:
             },
             timeout=15,
         )
-        _id_token_str = _token_resp.json().get("id_token", "")
-        _user = _decode_jwt_payload(_id_token_str) if _id_token_str else {}
-        if _user:
-            with st.spinner("登入中..."):
-                _token = _exchange_token(_id_token_str, _user)
-            if _token:
-                cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-                st.query_params.clear()
-                st.rerun()
-            else:
-                st.error("登入失敗，請重試")
-                st.query_params.clear()
+        _resp_json = _token_resp.json()
+        _id_token_str = _resp_json.get("id_token", "")
+        if not _id_token_str:
+            st.session_state["_auth_error"] = f"Google 未回傳 id_token。回應：{_resp_json}"
         else:
-            st.error("無法取得 Google 帳號資訊")
-            st.query_params.clear()
+            _user = _decode_jwt_payload(_id_token_str)
+            if _user:
+                with st.spinner("登入中..."):
+                    _token = _exchange_token(_id_token_str, _user)
+                if _token:
+                    cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
+                    st.rerun()
+                else:
+                    st.session_state["_auth_error"] = "Storm API 登入失敗，請重試"
+            else:
+                st.session_state["_auth_error"] = "無法解析 Google 帳號資訊"
     except Exception as e:
-        st.error(f"OAuth 錯誤：{e}")
-        st.query_params.clear()
+        st.session_state["_auth_error"] = f"OAuth 錯誤：{e}"
 
 # ── 驗證：本機開發模式直接跳過登入 ──────────────────────────
 _local_dev = os.getenv("LOCAL_DEV", "").lower() in ("1", "true", "yes")
@@ -120,6 +121,8 @@ if not _local_dev:
     if not _stored_token:
         st.title("📰 社群留言報導生成器")
         st.write("")
+        if "_auth_error" in st.session_state:
+            st.error(st.session_state.pop("_auth_error"))
         if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
             st.error(
                 "**設定錯誤：** `GOOGLE_CLIENT_ID` 或 `GOOGLE_CLIENT_SECRET` 未設定。\n\n"
