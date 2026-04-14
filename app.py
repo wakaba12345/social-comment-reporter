@@ -85,9 +85,8 @@ _oauth_error_from_google = st.query_params.get("error", "")
 if _oauth_error_from_google:
     st.session_state["_auth_error"] = f"Google 拒絕授權：{_oauth_error_from_google}"
 
-# 有 code，且尚未登入 → 進行 token 交換
-# 不清除 query_params（清除會導致 Streamlit Cloud 重建 session，session_state 遺失）
-if _code and not st.session_state.get("_storm_token") and not cookie_manager.get(_COOKIE_KEY):
+# Step 1：用 Google code 換 id_token（只做一次，成功後把 id_token 存進 session_state）
+if _code and not st.session_state.get("_storm_token") and not st.session_state.get("_google_id_token"):
     try:
         _token_resp = http_requests.post(
             "https://oauth2.googleapis.com/token",
@@ -107,20 +106,32 @@ if _code and not st.session_state.get("_storm_token") and not cookie_manager.get
         else:
             _user = _decode_jwt_payload(_id_token_str)
             if _user:
-                with st.spinner("登入中..."):
-                    _token, _storm_resp = _exchange_token(_id_token_str, _user)
-                with st.expander("🔍 DEBUG Storm API 回應（暫時）", expanded=True):
-                    st.write(_storm_resp)
-                if _token:
-                    st.session_state["_storm_token"] = _token
-                    cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-                    st.query_params.clear()
-                else:
-                    st.session_state["_auth_error"] = f"Storm API 登入失敗：{_storm_resp}"
+                # 存進 session_state，後續輪次不需要重用 code
+                st.session_state["_google_id_token"] = _id_token_str
+                st.session_state["_google_user"] = _user
+                st.query_params.clear()  # code 已用完，清除 URL
             else:
                 st.session_state["_auth_error"] = "無法解析 Google 帳號資訊"
     except Exception as e:
         st.session_state["_auth_error"] = f"OAuth 錯誤：{e}"
+
+# Step 2：用 id_token 換 Storm token（session_state 有 id_token 就嘗試）
+if st.session_state.get("_google_id_token") and not st.session_state.get("_storm_token"):
+    _id_token_str = st.session_state["_google_id_token"]
+    _user = st.session_state.get("_google_user", {})
+    with st.spinner("登入中..."):
+        _token, _storm_resp = _exchange_token(_id_token_str, _user)
+    with st.expander("🔍 DEBUG Storm API 回應（暫時）", expanded=True):
+        st.write(_storm_resp)
+    if _token:
+        st.session_state["_storm_token"] = _token
+        st.session_state.pop("_google_id_token", None)
+        st.session_state.pop("_google_user", None)
+        cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
+    else:
+        st.session_state["_auth_error"] = f"Storm API 登入失敗：{_storm_resp}"
+        st.session_state.pop("_google_id_token", None)
+        st.session_state.pop("_google_user", None)
 
 # ── 驗證：本機開發模式直接跳過登入 ──────────────────────────
 _local_dev = os.getenv("LOCAL_DEV", "").lower() in ("1", "true", "yes")
