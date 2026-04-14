@@ -12,8 +12,6 @@ load_dotenv(override=True)
 
 import requests as http_requests
 import streamlit as st
-import streamlit.components.v1 as components
-import extra_streamlit_components as stx
 from url_parser import parse_url, UnsupportedPlatformError
 from crawler import fetch_post, PostNotFoundError, CrawlerError
 from preprocessor import preprocess
@@ -25,7 +23,6 @@ _ALLOWED_HD = "storm.mg"  # 只允許此 Google Workspace 網域
 _REDIRECT_URI = "https://social-comment-reporter-nxayfk9rwvwnovzsqe6gjg.streamlit.app/"
 
 MAX_COMMENTS = 50
-_COOKIE_KEY = "_sct"  # obscure session cookie name
 
 
 def _decode_jwt_payload(credential: str) -> dict:
@@ -52,9 +49,6 @@ st.set_page_config(
     page_icon="📰",
     layout="wide",
 )
-
-# ── Cookie manager（必須在頁面最早初始化）────────────────────
-cookie_manager = stx.CookieManager()
 
 # ── 處理 OAuth2 callback（Google 回傳 ?code=）────────────────
 _code = st.query_params.get("code", "")
@@ -88,7 +82,6 @@ if _code and not st.session_state.get("_authed_email"):
                 st.session_state["_auth_error"] = f"僅限 @{_ALLOWED_HD} 帳號使用（你的帳號：{_email}）"
             elif _email:
                 st.session_state["_authed_email"] = _email
-                cookie_manager.set(_COOKIE_KEY, _email, key="cookie_set")
                 st.query_params.clear()
             else:
                 st.session_state["_auth_error"] = "無法取得 Google 帳號 email"
@@ -99,7 +92,7 @@ if _code and not st.session_state.get("_authed_email"):
 _local_dev = os.getenv("LOCAL_DEV", "").lower() in ("1", "true", "yes")
 
 if not _local_dev:
-    _authed_email = st.session_state.get("_authed_email") or cookie_manager.get(_COOKIE_KEY)
+    _authed_email = st.session_state.get("_authed_email")
 
     if not _authed_email:
         st.title("📰 社群留言報導生成器")
@@ -126,17 +119,12 @@ if not _local_dev:
         st.caption(f"僅限 @{_ALLOWED_HD} 帳號使用")
         st.stop()
 
-    # 同步 session_state（cookie 讀到後補回）
-    if not st.session_state.get("_authed_email"):
-        st.session_state["_authed_email"] = _authed_email
-
 # ── 登出按鈕（本機開發模式不顯示）───────────────────────────
 with st.sidebar:
     if _local_dev:
         st.caption("🛠 本機開發模式（已跳過登入）")
     elif st.button("登出", use_container_width=True):
         st.session_state.pop("_authed_email", None)
-        cookie_manager.delete(_COOKIE_KEY, key="cookie_del")
         st.rerun()
 
 st.title("📰 社群留言報導生成器")
