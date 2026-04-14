@@ -36,8 +36,8 @@ def _decode_jwt_payload(credential: str) -> dict:
         return {}
 
 
-def _exchange_token(credential: str, user: dict) -> str:
-    """POST to ADMIN_API and return the storm token, or empty string on failure."""
+def _exchange_token(credential: str, user: dict) -> tuple:
+    """POST to ADMIN_API and return (storm_token, raw_response)."""
     try:
         resp = http_requests.post(
             f"{ADMIN_API}v1/loging",
@@ -55,10 +55,11 @@ def _exchange_token(credential: str, user: dict) -> str:
         )
         data = resp.json()
         if str(data.get("code")) == "200":
-            return data["data"]["token"]
+            return data["data"]["token"], data
+        return "", data
     except Exception as e:
         print(f"[auth] token exchange error: {e}")
-    return ""
+        return "", {"error": str(e)}
 
 PLATFORM_LABEL = {
     "facebook": "Facebook", "threads": "Threads",
@@ -81,20 +82,12 @@ cookie_manager = stx.CookieManager()
 _code = st.query_params.get("code", "")
 _oauth_error_from_google = st.query_params.get("error", "")
 
-# DEBUG 面板（暫時）
-with st.expander("🔍 DEBUG（暫時，測試後移除）", expanded=True):
-    st.write("**query_params:**", dict(st.query_params))
-    st.write("**_code 存在:**", bool(_code))
-    st.write("**session_state keys:**", list(st.session_state.keys()))
-    st.write("**GOOGLE_CLIENT_ID 設定:**", bool(GOOGLE_CLIENT_ID))
-    st.write("**GOOGLE_CLIENT_SECRET 設定:**", bool(GOOGLE_CLIENT_SECRET))
-    st.write("**ADMIN_API:**", ADMIN_API or "（未設定）")
-
 if _oauth_error_from_google:
     st.session_state["_auth_error"] = f"Google 拒絕授權：{_oauth_error_from_google}"
 
-if _code:
-    st.query_params.clear()  # 先清 URL，避免重整重複使用 code
+# 有 code，且尚未登入 → 進行 token 交換
+# 不清除 query_params（清除會導致 Streamlit Cloud 重建 session，session_state 遺失）
+if _code and not st.session_state.get("_storm_token") and not cookie_manager.get(_COOKIE_KEY):
     try:
         _token_resp = http_requests.post(
             "https://oauth2.googleapis.com/token",
@@ -108,8 +101,6 @@ if _code:
             timeout=15,
         )
         _resp_json = _token_resp.json()
-        with st.expander("🔍 DEBUG Google token 回應", expanded=True):
-            st.write(_resp_json)
         _id_token_str = _resp_json.get("id_token", "")
         if not _id_token_str:
             st.session_state["_auth_error"] = f"Google 未回傳 id_token。回應：{_resp_json}"
@@ -117,14 +108,15 @@ if _code:
             _user = _decode_jwt_payload(_id_token_str)
             if _user:
                 with st.spinner("登入中..."):
-                    _token = _exchange_token(_id_token_str, _user)
-                with st.expander("🔍 DEBUG Storm token 結果", expanded=True):
-                    st.write("token 取得成功:", bool(_token))
+                    _token, _storm_resp = _exchange_token(_id_token_str, _user)
+                with st.expander("🔍 DEBUG Storm API 回應（暫時）", expanded=True):
+                    st.write(_storm_resp)
                 if _token:
                     st.session_state["_storm_token"] = _token
                     cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
+                    st.query_params.clear()
                 else:
-                    st.session_state["_auth_error"] = "Storm API 登入失敗，請重試"
+                    st.session_state["_auth_error"] = f"Storm API 登入失敗：{_storm_resp}"
             else:
                 st.session_state["_auth_error"] = "無法解析 Google 帳號資訊"
     except Exception as e:
