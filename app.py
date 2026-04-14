@@ -105,7 +105,7 @@ if _code:
                 if _token:
                     st.session_state["_storm_token"] = _token
                     cookie_manager.set(_COOKIE_KEY, _token, key="cookie_set")
-                    st.rerun()
+                    # 不 rerun，讓這輪直接繼續跑到主程式（session_state 已有 token）
                 else:
                     st.session_state["_auth_error"] = "Storm API 登入失敗，請重試"
             else:
